@@ -89,14 +89,20 @@ class TestInstitutionalEntryAndLotSizingFixes(unittest.TestCase):
 
     def test_pullback_entry_generates_limit_order(self):
         """Verify that when entry_price differs from market price (passive retracement), order_type is LIMIT."""
+        # Set up a scenario where price is in PREMIUM zone chasing a pullback entry
+        # This triggers the "Buy from the bottom" LIMIT order routing logic
         st = StructureContext(
             bias="BULLISH",
             demand_zone=(2385.0, 2390.0),
             channel_lower=2388.0,
             channel_upper=2400.0,
+            discount_premium_zone="PREMIUM",  # Price is in PREMIUM, needs pullback to DISCOUNT
         )
         setattr(st, "swing_low", 2388.0)
         setattr(st, "swing_high", 2400.0)
+        # Add bullish order blocks and FVGs for the pullback engine to target
+        setattr(st, "order_blocks", [{"type": "BULLISH_OB", "high": 2392.0, "low": 2390.0}])
+        setattr(st, "fair_value_gaps", [{"type": "BULLISH_FVG", "top": 2395.0, "bottom": 2392.0}])
         ctx = MarketContext(
             symbol="XAUUSD",
             timestamp=datetime.now(timezone.utc),
@@ -104,16 +110,16 @@ class TestInstitutionalEntryAndLotSizingFixes(unittest.TestCase):
             bid=2399.8,
             ask=2400.2,
             structure=st,
-            liquidity=LiquidityContext(sell_side_liquidity=2385.0, buy_side_liquidity=2415.0),
+            liquidity=LiquidityContext(sell_side_liquidity=2385.0, buy_side_liquidity=2415.0, sweep_detected=False),
             volatility=VolatilityContext(atr=4.0, current_spread_pips=2.0),
-            momentum=MomentumContext(trend_score=35, adx=25.0),
+            momentum=MomentumContext(trend_score=15, adx=20.0),  # Lower trend_score to not trigger breakout mode
             session=SessionContext(is_prime_session=True)
         )
         regime = RegimeOutput(primary_regime=MarketRegime.TREND_BULL, probabilities={}, confidence=0.80)
         report = AnalystReport(role=AnalystRole.STRUCTURE, symbol="XAUUSD", bias="BUY", score=80.0, confidence=0.80)
         devil = DevilAdvocateReport(symbol="XAUUSD", counter_bias="SELL", penalty_score=0.0, invalidation_risk_coefficient=1.0)
 
-        # Baseline evaluation (no mtf) computes OTE retracement entry around 2392.08 (< 2400.0)
+        # Baseline evaluation computes OTE retracement entry around 2392.08 (< 2400.0)
         decision = self.decision_engine.evaluate(
             context=ctx,
             regime=regime,
